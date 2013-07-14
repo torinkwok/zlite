@@ -38,7 +38,7 @@
 #include <io.h>
 
 int ma_n(int argc, char** argv);
-int main(int argc, char** argv) {
+int main(int argc, char** argv) { // set stdio to binary mode for windows
     setmode(fileno(stdin),  O_BINARY);
     setmode(fileno(stdout), O_BINARY);
     return ma_n(argc, argv);
@@ -230,11 +230,13 @@ int rolz_encode(unsigned char* ibuf, unsigned short* obuf, int ilen) {
         match_idx = -1;
         if(pos + MATCH_LEN_MAX < ilen) { /* find match */
             for(i = 0; i < MATCH_IDX_SIZE; i++) {
-                item = M_rolz_item(context, i);
+                if((item = M_rolz_item(context, i)) == 0) {
+                    break;
+                }
                 item_chr = item >> 24;
                 item_pos = item & 0xffffff;
 
-                if(item_pos != 0 && item_chr == ibuf[pos]) {
+                if(item_chr == ibuf[pos]) {
                     for(j = 1; j < MATCH_LEN_MAX; j++) {
                         if(ibuf[pos + j] != ibuf[item_pos + j]) {
                             break;
@@ -251,20 +253,18 @@ int rolz_encode(unsigned char* ibuf, unsigned short* obuf, int ilen) {
                 }
             }
         }
-        if(match_len < MATCH_LEN_MIN) {
-            match_len = 1;
-            match_idx = -1;
-        }
 
-        if(match_idx == -1) { /* encode */
+        if(match_len < MATCH_LEN_MIN) { /* encode */
             obuf[olen++] = ibuf[pos];
+            rolz_update_context(ibuf, pos++, 1);
+
         } else {
             obuf[olen++] = 256 + (match_len - MATCH_LEN_MIN) * MATCH_IDX_SIZE + match_idx;
+            while((match_len--) > 0) {
+                rolz_update_context(ibuf, pos++, 1);
+            }
         }
 
-        for(i = 0; i < match_len; i++) { /* update context */
-            rolz_update_context(ibuf, pos++, 1);
-        }
     }
     return olen;
 }
@@ -283,17 +283,16 @@ int rolz_decode(unsigned short* ibuf, unsigned char* obuf, int ilen) {
         if(ibuf[pos] < 256) { /* process a literal byte */
             obuf[olen] = ibuf[pos];
             rolz_update_context(obuf, olen++, 0);
-            continue;
-        }
 
-        /* process a match */
-        match_idx = (ibuf[pos] - 256) % MATCH_IDX_SIZE;
-        match_len = (ibuf[pos] - 256) / MATCH_IDX_SIZE + MATCH_LEN_MIN;
-        match_offset = olen - M_rolz_item(context, match_idx);
+        } else { /* process a match */
+            match_idx = (ibuf[pos] - 256) % MATCH_IDX_SIZE;
+            match_len = (ibuf[pos] - 256) / MATCH_IDX_SIZE + MATCH_LEN_MIN;
+            match_offset = olen - M_rolz_item(context, match_idx);
 
-        while((match_len--) > 0) {
-            obuf[olen] = obuf[olen - match_offset];
-            rolz_update_context(obuf, olen++, 0);
+            while((match_len--) > 0) {
+                obuf[olen] = obuf[olen - match_offset];
+                rolz_update_context(obuf, olen++, 0);
+            }
         }
     }
     return olen;
